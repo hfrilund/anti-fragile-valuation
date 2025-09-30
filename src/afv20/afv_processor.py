@@ -7,7 +7,7 @@ import pandas as pd
 from finance_data_sources import yahoo
 
 def process():
-    con = duckdb.connect('../../data/finance_data.db')
+    con = duckdb.connect('./data/finance_data.db')
     yf = yahoo.YahooFinanceDataSource(con)
 
     tickers = con.execute("select * from tickers").fetchdf()
