@@ -50,7 +50,9 @@ def run_basic_afv_scoring_tests():
             fcf_yield = yf.fcf_yield(symbol)
             ocf_margin, min_ocf_margin = yf.ocf_margin(symbol)
             ocf_margin_volatility = yf.ocf_margin_volatility(symbol)
+            has_negative_net_income, avg_net_margin = yf.net_income_check(symbol)
             scaled_rp = yf.scaled_rp(fcf_yield, ocf_margin, min_ocf_margin, ocf_margin_volatility)
+            scaled_rp21 = yf.scaled_rp_21(fcf_yield, ocf_margin, min_ocf_margin, ocf_margin_volatility, has_negative_net_income, avg_net_margin)
             sector_score = yf.sector_score(symbol)
             geo_score = yf.geo_score(symbol)
             debt_score = yf.debt_score(symbol)
@@ -63,6 +65,7 @@ def run_basic_afv_scoring_tests():
             print(f"  Min OCF Margin: {min_ocf_margin}")
             print(f"  OCF Margin Volatility: {ocf_margin_volatility}")
             print(f"  Scaled RP: {scaled_rp}")
+            print(f"  Scaled RP 2.1: {scaled_rp21}")
             print(f"  Sector Score: {sector_score}")
             print(f"  Geo Score: {geo_score}")
             print(f"  Debt Score: {debt_score}")
@@ -75,18 +78,19 @@ def run_basic_afv_scoring_tests():
 
             if sector == 'Financial Services':
                 scaled_rp = 0
+                scaled_rp21 = 0
                 debt_score = 0
                 vd_score = 0
             elif sector == 'Industrials' and industry_score == -1:
                 vd_score = 0
 
-            print(f"Adjusted Scores for {symbol}: , Sector: {sector}, Industry Score: {industry_score}, Scaled RP: {scaled_rp}, Debt Score: {debt_score}, VD Score: {vd_score}, Trend Score: {trend_score}, Geo Score: {geo_score}, Sector Score: {sector_score}, ocf_margin_volatility: {ocf_margin_volatility}")
+            print(f"Adjusted Scores for {symbol}: , Sector: {sector}, Industry Score: {industry_score}, Scaled RP: {scaled_rp}, Scaled RP 2.1: {scaled_rp21}, Debt Score: {debt_score}, VD Score: {vd_score}, Trend Score: {trend_score}, Geo Score: {geo_score}, Sector Score: {sector_score}, ocf_margin_volatility: {ocf_margin_volatility}")
 
             afv_score = scaled_rp + sector_score + geo_score + debt_score + trend_score + vd_score
-            scaled_afv = max(0, min(10, (afv_score + 2) * 2))
+            afv_score21 = scaled_rp21 + sector_score + geo_score + debt_score + trend_score + vd_score
 
             print(f"AFV Score for {symbol}: {afv_score}\n")
-            print(f"Scaled AFV Score for {symbol}: {scaled_afv}\n")
+            print(f"AFV 2.1 Score for {symbol}: {afv_score21}\n")
 
         except Exception as e:
             print(f"Error processing {symbol}: {e}")

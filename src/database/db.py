@@ -42,6 +42,25 @@ def init_schema():
             computed_at TIMESTAMP DEFAULT current_timestamp
         );""")
 
+        con.execute("""
+            CREATE TABLE IF NOT EXISTS afv_21_scores (
+            symbol TEXT,
+            afv REAL,
+            afv21 REAL,
+            rp REAL,
+            rp21 REAL,
+            fcf_yield REAL,
+            ocf_margin REAL,
+            min_ocf_margin REAL,
+            ocf_margin_volatility REAL,
+            sector_score REAL,
+            geo_score REAL,
+            debt_score REAL,
+            trend_score REAL,
+            vd_score REAL,
+            computed_at TIMESTAMP DEFAULT current_timestamp
+        );""")
+
 def drop_schema():
     with duckdb.connect(DB_PATH) as con:
         con.execute("DROP TABLE IF EXISTS tickers;")

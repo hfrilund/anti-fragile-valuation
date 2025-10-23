@@ -1,6 +1,7 @@
 import random
 import time
 
+import duckdb
 import yfinance as yf
 import numpy as np
 import pandas as pd
@@ -8,13 +9,13 @@ from io import StringIO
 
 class YahooFinanceDataSource:
     def __init__(self, con):
-        self.active_ticker = None
+        self._ticker_cache = {}
         self.con = con
 
-    def _get_ticker(self, symbol: str):
-        if self.active_ticker is None or self.active_ticker.ticker != symbol:
-            self.active_ticker = yf.Ticker(symbol)
-        return self.active_ticker
+    def _get_ticker(self, symbol):
+        if symbol not in self._ticker_cache:
+            self._ticker_cache[symbol] = yf.Ticker(symbol)
+        return self._ticker_cache[symbol]
 
     def _get_history(self, symbol: str):
         data = self._get_yahoo_data(symbol, 'history')
@@ -22,9 +23,9 @@ class YahooFinanceDataSource:
         if data is None or data.empty:
             ticker = self._get_ticker(symbol)
             time.sleep(random.uniform(1, 3.5))
-            cashflow = ticker.cashflow
-            self._store_yahoo_data(symbol, 'history', cashflow)
-            return cashflow
+            history = ticker.history
+            self._store_yahoo_data(symbol, 'history', history)
+            return history
 
         return data
     def _get_cashflow(self, symbol: str):
@@ -107,12 +108,17 @@ class YahooFinanceDataSource:
             return df
 
     def normalize_to_eur(self, value: float, currency: str) -> float:
-        if currency == "EUR":
+        if not currency or currency == "EUR":
             return value
 
-        fx_pair = f"{currency}EUR=X"  # e.g. "ZAREUR=X"
-        fx_rate = self._get_ticker(fx_pair).history(period="1d")["Close"].iloc[-1]
-
+        fx_pair = f"{currency}EUR=X"
+        try:
+            fx_rate = self._get_ticker(fx_pair).history(period="1d")["Close"].iloc[-1]
+        except Exception:
+            # Try inverted pair (e.g., EURUSD=X)
+            inverted_pair = f"EUR{currency}=X"
+            fx_rate_inv = self._get_ticker(inverted_pair).history(period="1d")["Close"].iloc[-1]
+            fx_rate = 1 / fx_rate_inv
         return value * fx_rate
 
     def can_be_found(self, symbol: str) -> bool:
@@ -130,14 +136,14 @@ class YahooFinanceDataSource:
                 print(f"No cashflow data for {symbol}")
                 return None
 
-            ocf_series = cashflow.loc['Operating Cash Flow'].dropna().iloc[:4]
+            ocf_series = cashflow.loc['Operating Cash Flow'].dropna().sort_index(ascending=False).iloc[:4]
 
             if ocf_series.empty:
                 ocf_mean = None  # Or raise an exception or skip this stock
             else:
                 ocf_mean = ocf_series.mean()
 
-            capex_series = cashflow.loc['Capital Expenditure'].dropna().iloc[:4]
+            capex_series = cashflow.loc['Capital Expenditure'].dropna().sort_index(ascending=False).iloc[:4]
 
             if capex_series.empty:
                 return None
@@ -166,8 +172,8 @@ class YahooFinanceDataSource:
             cashflow = self._get_cashflow(symbol)
             financials = self._get_financials(symbol)  # for revenue
 
-            ocf_series = cashflow.loc['Operating Cash Flow'].dropna().iloc[:4]
-            rev_series = financials.loc['Total Revenue'].dropna().iloc[:4]
+            ocf_series = cashflow.loc['Operating Cash Flow'].dropna().sort_index(ascending=True).iloc[:4]
+            rev_series = financials.loc['Total Revenue'].dropna().sort_index(ascending=True).iloc[:4]
 
             if len(ocf_series) == 0 or len(rev_series) == 0:
                 print(f"No OCF/revenue values for {symbol}, skipping OCF margin calculation")
@@ -235,6 +241,7 @@ class YahooFinanceDataSource:
         except Exception as e:
             print(f"Error calculating OCF margin volatility for {symbol}: {e}")
             return None
+
     def scaled_rp(self, fcf_yield: float, ocf_margin: float, min_ocf_margin: float, ocf_margin_volatility: float) -> float:
         if fcf_yield <= 0:
             score = -2.0
@@ -271,6 +278,80 @@ class YahooFinanceDataSource:
 
         # Final clamp
         return max(min(score, 5), -3)
+
+    def net_income_check(self, symbol: str) -> tuple[bool, float]:
+        """Check if any of last 4 annual net incomes are negative and compute avg net margin."""
+        try:
+            financials = self._get_financials(symbol)
+            net_income = financials.loc['Net Income'].dropna().iloc[:4]
+            revenue = financials.loc['Total Revenue'].dropna().iloc[:4]
+
+            if len(net_income) < 4 or len(revenue) < 4:
+                print(f"Insufficient net income/revenue data for {symbol}")
+                return False, 0.0
+
+            has_negative = any(ni < 0 for ni in net_income)
+
+            financial_currency = self._get_info(symbol).get("financialCurrency", "USD")
+            net_margins = []
+            for ni, rev in zip(net_income, revenue):
+                if rev and rev != 0:
+                    ni_eur = self.normalize_to_eur(ni, financial_currency)
+                    rev_eur = self.normalize_to_eur(rev, financial_currency)
+                    net_margins.append(ni_eur / rev_eur)
+
+            avg_net_margin = np.mean(net_margins) if net_margins else 0.0
+            return has_negative, avg_net_margin
+        except Exception as e:
+            print(f"Error checking net income for {symbol}: {e}")
+            return False, 0.0
+
+    def scaled_rp_21(self, fcf_yield: float, ocf_margin: float, min_ocf_margin: float, ocf_margin_volatility: float,
+                     has_negative_net_income: bool, avg_net_margin: float) -> float:
+        """Calculate Scaled_RP (2021 version) with new logistic and net income penalties as parameters."""
+        if fcf_yield is None or fcf_yield <= 0:
+            return -2.0
+
+        base_score = 5.5 / (1 + np.exp(-35 * (fcf_yield - 0.15))) + 0.5  # Shifted sigmoid
+
+        # Net income penalty
+        if has_negative_net_income:
+            base_score *= 0.5
+
+        # Gradual OCF margin adjustment
+        if ocf_margin is not None:
+            if ocf_margin < 0:
+                return -2.0
+            multiplier = 0.8 + (ocf_margin * 2.0)  # Linear: 0%→0.8, 10%→1.0, 20%→1.2
+            multiplier = max(min(multiplier, 1.3), 0.7)  # Clamp 0.7-1.3
+            base_score *= multiplier
+
+        # Min margin stress test
+        if min_ocf_margin is not None:
+            if min_ocf_margin < 0:
+                return -2.0
+            elif ocf_margin and min_ocf_margin < 0.5 * ocf_margin:
+                deterioration = min_ocf_margin / (0.5 * ocf_margin)
+                base_score *= (0.8 - 0.3 * (1 - deterioration))  # Gradual 0.5-0.8
+
+        # Volatility adjustment (simplified, fixed threshold for all sectors)
+        vol_threshold = 0.20  # Compromise threshold to balance resilience without sector dependence
+        if ocf_margin_volatility is not None:
+            if ocf_margin_volatility > 1.0:
+                return -2.0
+            elif ocf_margin_volatility > vol_threshold:
+                base_score *= (0.5 + 0.3 * ((1.0 - ocf_margin_volatility) / (1.0 - vol_threshold)))  # Linear 0.5-0.8
+            elif ocf_margin_volatility < 0.05:
+                base_score *= 1.1
+
+        # Net margin adjustment
+        if avg_net_margin < 0.05:
+            base_score *= 0.5
+        elif avg_net_margin > 0.15:
+            base_score *= 1.1
+
+        # Final clamp per PDF
+        return max(min(base_score, 5), -3)
 
     def sector(self, symbol: str) -> str:
         info = self._get_info(symbol)
@@ -591,6 +672,7 @@ class YahooFinanceDataSource:
     def debt_score(self, symbol: str) -> float:
         try:
             bs = self._get_balance_sheet(symbol)
+
             if bs.empty or bs.shape[1] == 0:
                 return None
             bs_latest = bs.iloc[:, 0]
@@ -728,24 +810,29 @@ class YahooFinanceDataSource:
         return score
 
 if __name__ == "__main__":
-    ticker = 'BEDU'
-    y = YahooFinanceDataSource()
+    con = duckdb.connect('../../data/finance_data.db')
+    ticker = 'CNQ'
+    y = YahooFinanceDataSource(con)
     fcf = y.fcf_yield(ticker)
     ocf_margin, min_ofc_margin = y.ocf_margin(ticker)
     ocf_margin_volatility = y.ocf_margin_volatility(ticker)
-    rp = y.scaled_rp(fcf, ocf_margin, min_ofc_margin, ocf_margin_volatility)
+    has_negative_net_income, avg_net_margin = y.net_income_check(ticker)
     sector = y.sector_score(ticker)
+    rp = y.scaled_rp(fcf, ocf_margin, min_ofc_margin, ocf_margin_volatility)
+    rp21 = y.scaled_rp_21(fcf, ocf_margin, min_ofc_margin, ocf_margin_volatility,
+                         has_negative_net_income, avg_net_margin)
+
     geo = y.geo_score(ticker)
     trend = y.trend_score(ticker)
     debt = y.debt_score(ticker)
     vd = y.vd_score(ticker)
 
-    print(f"FCF Yield: {fcf}, OCF Margin: {ocf_margin}, Scaled RP: {rp}, Sector: {sector}, Geo: {geo}, Trend: {trend}, Debt: {debt}, VD: {vd}, OCF Margin Volatility: {ocf_margin_volatility}, Min OCF Margin: {min_ofc_margin}")
+
+    print(f"FCF Yield: {fcf}, OCF Margin: {ocf_margin}, OCF Margin volatility: {ocf_margin_volatility}, Scaled RP: {rp}, Scaled RP 2.1: {rp21} Sector: {sector}, Geo: {geo}, Trend: {trend}, Debt: {debt}, VD: {vd}, OCF Margin Volatility: {ocf_margin_volatility}, Min OCF Margin: {min_ofc_margin}, Has Negative Net Income: {has_negative_net_income}, Avg Net Margin: {avg_net_margin}")
 
     afv20 = rp + sector + geo + trend + debt + vd
-    scaled_afv = max(0, min(10, (afv20 + 2) * 2))
-    print(f"AFV-20: {afv20}")
-    print(f"Scaled AFV-20: {scaled_afv}")
+    afv21 = rp21 + sector + geo + trend + debt + vd
+    print(f"AFV-20: {afv20}, AFV-21: {afv21}")
     #ticker = yf.Ticker("AAPL")
     #bs = ticker.balance_sheet
     #print(bs.index)
