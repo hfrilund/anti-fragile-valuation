@@ -6,8 +6,8 @@ import pandas as pd
 
 from finance_data_sources import yahoo
 
-def process():
-    con = duckdb.connect('./data/finance_data.db')
+def process(db_file_path: str = './data/finance_data.db'):
+    con = duckdb.connect(db_file_path)
     yf = yahoo.YahooFinanceDataSource(con)
 
     tickers = con.execute("select * from tickers").fetchdf()
@@ -71,7 +71,7 @@ def process():
             con.execute("""
                 insert into afv_21_scores (symbol, afv, afv21, rp, rp21, fcf_yield, ocf_margin, min_ocf_margin, ocf_margin_volatility, sector_score, geo_score, debt_score, trend_score, vd_score, computed_at)
                 values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, current_timestamp)
-            """, (symbol, afv_score, afv21_score, scaled_rp, scaled_rp21, ocf_margin, min_ocf_margin, ocf_margin_volatility, sector_score, geo_score, debt_score, trend_score, vd_score))
+            """, (symbol, afv_score, afv21_score, scaled_rp, scaled_rp21, fcf_yield, ocf_margin, min_ocf_margin, ocf_margin_volatility, sector_score, geo_score, debt_score, trend_score, vd_score))
 
             con.commit()
         except Exception as e:

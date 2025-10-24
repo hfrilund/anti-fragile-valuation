@@ -6,3 +6,6 @@ morningstar/
 venv/
 __pycache__/
 data/
+dist/
+data_backup/
+*.egg-info/
