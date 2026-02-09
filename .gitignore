@@ -9,3 +9,5 @@ data/
 dist/
 data_backup/
 *.egg-info/
+csv_export/
+*.ipynb_checkpoints/
