@@ -811,7 +811,7 @@ class YahooFinanceDataSource:
 
 if __name__ == "__main__":
     con = duckdb.connect('../../data/finance_data.db')
-    ticker = 'CNQ'
+    ticker = 'SSABBH.HE'
     y = YahooFinanceDataSource(con)
     fcf = y.fcf_yield(ticker)
     ocf_margin, min_ofc_margin = y.ocf_margin(ticker)

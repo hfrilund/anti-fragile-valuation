@@ -6,7 +6,7 @@ import pandas as pd
 
 from finance_data_sources import yahoo
 
-def process(db_file_path: str = './data/finance_data.db'):
+def process(db_file_path: str = '../../data/finance_data.db'):
     con = duckdb.connect(db_file_path)
     yf = yahoo.YahooFinanceDataSource(con)
 
