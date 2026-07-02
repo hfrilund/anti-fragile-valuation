@@ -12,6 +12,7 @@ class YahooFinanceDataSource:
     def __init__(self, con):
         self._ticker_cache = {}
         self._fx_cache = {}
+        self._info_cache = {}
         self.con = con
 
     def _get_ticker(self, symbol):
@@ -69,6 +70,9 @@ class YahooFinanceDataSource:
         return data
 
     def _get_info(self, symbol: str):
+        if symbol in self._info_cache:
+            return self._info_cache[symbol]
+
         data = self._get_yahoo_data(symbol, 'info')
 
         if data is None or data.empty:
@@ -77,9 +81,12 @@ class YahooFinanceDataSource:
             if info is None or info.empty:
                 raise Exception(f"Could not fetch info for {symbol} after retries")
             self._store_yahoo_data(symbol, 'info', info)
-            return info.iloc[0].to_dict()
+            result = info.iloc[0].to_dict()
+        else:
+            result = data.iloc[0].to_dict()
 
-        return data.iloc[0].to_dict()
+        self._info_cache[symbol] = result
+        return result
 
     def _get_financials(self, symbol: str):
         data = self._get_yahoo_data(symbol, 'financials')
@@ -109,7 +116,7 @@ class YahooFinanceDataSource:
 
     def _store_yahoo_data(self, symbol: str, dataset: str, data: pd.DataFrame):
         json_str = data.to_json()
-        jitter_days = random.uniform(-3, 3)
+        jitter_days = random.uniform(0, 3)
         ts = pd.Timestamp.now() + timedelta(days=jitter_days)
         self.con.execute(
             "insert into yahoo_data (symbol, dataset, data, ts) values (?, ?, ?, ?)",
@@ -147,9 +154,38 @@ class YahooFinanceDataSource:
         return value * fx_rate
 
     def can_be_found(self, symbol: str) -> bool:
-        ticker = yf.Ticker(symbol)
-        fi = ticker.fast_info  # very lightweight
-        return fi is not None and "lastPrice" in fi and fi["lastPrice"] is not None
+        ticker = self._get_ticker(symbol)
+        try:
+            fi = ticker.fast_info
+            if fi is not None:
+                for field in ("lastPrice", "marketCap", "shares"):
+                    try:
+                        if fi[field] is not None:
+                            return True
+                    except (KeyError, Exception):
+                        continue
+            # All fast_info fields were None — fall back to full info
+            info = ticker.info
+            return bool(info and info.get("regularMarketPrice") is not None)
+        except Exception:
+            return False
+
+    def prefetch(self, symbol: str) -> set[str]:
+        """Pre-fetch all datasets needed for scoring into DB and in-memory cache.
+        Returns the set of dataset names that failed to fetch."""
+        failed = set()
+        for name, fn in [
+            ('cashflow',      lambda: self._get_cashflow(symbol)),
+            ('financials',    lambda: self._get_financials(symbol)),
+            ('balance_sheet', lambda: self._get_balance_sheet(symbol)),
+            ('info',          lambda: self._get_info(symbol)),
+        ]:
+            try:
+                fn()
+            except Exception as e:
+                print(f"Prefetch failed for {symbol} [{name}]: {e}")
+                failed.add(name)
+        return failed
 
     def fcf_yield(self, symbol: str) -> float | None:
         """Fetch Operating Cash Flow (TTM) from Yahoo Finance"""
