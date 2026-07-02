@@ -1,9 +1,50 @@
+from pathlib import Path
+import sys
 import duckdb
 
-DB_PATH = '../../data/finance_data.db'
+DB_PATH = str(Path(__file__).resolve().parent.parent.parent / 'data' / 'finance_data.db')
 
-def init_schema():
-    with duckdb.connect(DB_PATH) as con:
+
+def connect(db_path: str = DB_PATH) -> duckdb.DuckDBPyConnection:
+    """Open a read-write connection, with a clear error if the file is locked."""
+    try:
+        return duckdb.connect(db_path)
+    except duckdb.IOException as e:
+        if 'lock' in str(e).lower():
+            print(f"ERROR: {db_path} is locked by another process.")
+            print("You probably have an open DuckDB connection in a Jupyter notebook.")
+            print("Close it with:  con.close()")
+            print("or restart the notebook kernel, then re-run this command.")
+            sys.exit(1)
+        raise
+
+
+def migrate(db_path: str = DB_PATH):
+    """Run migrations for existing databases."""
+    with connect(db_path) as con:
+        con.execute("ALTER TABLE tickers ADD COLUMN IF NOT EXISTS is_dead boolean default false")
+        con.execute("ALTER TABLE tickers ADD COLUMN IF NOT EXISTS dead_reason varchar")
+        con.execute("ALTER TABLE technical_analysis ADD COLUMN IF NOT EXISTS ma50_bottom_days_ago INTEGER")
+        con.execute("ALTER TABLE technical_analysis ADD COLUMN IF NOT EXISTS ma200_trend TEXT")
+        con.execute("ALTER TABLE technical_analysis ADD COLUMN IF NOT EXISTS ma200_bottom_days_ago INTEGER")
+        con.execute("""
+            CREATE TABLE IF NOT EXISTS holdings (
+                fetched_at   TIMESTAMP DEFAULT current_timestamp,
+                yahoo_symbol TEXT,
+                symbol       TEXT,
+                description  TEXT,
+                isin         TEXT,
+                exchange     TEXT,
+                currency     TEXT,
+                position     REAL,
+                mark_price   REAL,
+                pos_value    REAL,
+                cost_basis   REAL
+            )
+        """)
+
+def init_schema(db_path: str = DB_PATH):
+    with connect(db_path) as con:
         con.execute("""
             create table if not exists tickers (
                 ticker_pk varchar primary key, --sha1(isin + mic)
@@ -12,7 +53,9 @@ def init_schema():
                 mic varchar,
                 raw_ticker varchar,
                 yahoo_ticker varchar,
-                asset_name text
+                asset_name text,
+                is_dead boolean default false,
+                dead_reason varchar
             );
         """)
 
@@ -61,19 +104,58 @@ def init_schema():
             computed_at TIMESTAMP DEFAULT current_timestamp
         );""")
 
-def drop_schema():
-    with duckdb.connect(DB_PATH) as con:
+        con.execute("""
+            CREATE TABLE IF NOT EXISTS holdings (
+                fetched_at   TIMESTAMP DEFAULT current_timestamp,
+                yahoo_symbol TEXT,
+                symbol       TEXT,
+                description  TEXT,
+                isin         TEXT,
+                exchange     TEXT,
+                currency     TEXT,
+                position     REAL,
+                mark_price   REAL,
+                pos_value    REAL,
+                cost_basis   REAL
+            )
+        """)
+
+        con.execute("""
+            CREATE TABLE IF NOT EXISTS technical_analysis (
+                symbol              TEXT,
+                computed_at         TIMESTAMP DEFAULT current_timestamp,
+                afv21_score         REAL,
+                close_price         REAL,
+                ma50                REAL,
+                ma200               REAL,
+                ma_cross_signal     TEXT,
+                ma_cross_days_ago   INTEGER,
+                ma_distance_pct     REAL,
+                rsi14               REAL,
+                macd_line           REAL,
+                macd_signal_line    REAL,
+                macd_histogram      REAL,
+                macd_sentiment      TEXT,
+                obv                 REAL,
+                obv_trend           TEXT,
+                ma50_bottom_days_ago  INTEGER,
+                ma200_trend           TEXT,
+                ma200_bottom_days_ago INTEGER
+            )
+        """)
+
+def drop_schema(db_path: str = DB_PATH):
+    with connect(db_path) as con:
         con.execute("DROP TABLE IF EXISTS tickers;")
         con.execute("DROP TABLE IF EXISTS yahoo_data;")
         con.execute("DROP TABLE IF EXISTS afv_20_scores;")
 
-def truncate_schema():
-    with duckdb.connect(DB_PATH) as con:
+def truncate_schema(db_path: str = DB_PATH):
+    with connect(db_path) as con:
         con.execute("DELETE FROM tickers;")
         con.execute("DELETE FROM yahoo_data;")
         con.execute("DELETE FROM afv_20_scores;")
 
-# Example usage
 if __name__ == "__main__":
-    #drop_schema()
     init_schema()
+    migrate()
