@@ -1,5 +1,6 @@
 import random
 import time
+from datetime import timedelta
 
 import duckdb
 import yfinance as yf
@@ -10,6 +11,7 @@ from io import StringIO
 class YahooFinanceDataSource:
     def __init__(self, con):
         self._ticker_cache = {}
+        self._fx_cache = {}
         self.con = con
 
     def _get_ticker(self, symbol):
@@ -17,24 +19,37 @@ class YahooFinanceDataSource:
             self._ticker_cache[symbol] = yf.Ticker(symbol)
         return self._ticker_cache[symbol]
 
+    def _fetch_with_retry(self, fetch_fn, max_attempts=3):
+        for attempt in range(max_attempts):
+            try:
+                result = fetch_fn()
+                if result is not None and (not hasattr(result, 'empty') or not result.empty):
+                    return result
+            except Exception as e:
+                print(f"Fetch attempt {attempt + 1} failed: {e}")
+            if attempt < max_attempts - 1:
+                time.sleep(2 ** attempt * random.uniform(2, 4))
+        return None
+
     def _get_history(self, symbol: str):
         data = self._get_yahoo_data(symbol, 'history')
 
         if data is None or data.empty:
             ticker = self._get_ticker(symbol)
-            time.sleep(random.uniform(1, 3.5))
             history = ticker.history
             self._store_yahoo_data(symbol, 'history', history)
             return history
 
         return data
+
     def _get_cashflow(self, symbol: str):
         data = self._get_yahoo_data(symbol, 'cashflow')
 
         if data is None or data.empty:
             ticker = self._get_ticker(symbol)
-            time.sleep(random.uniform(1, 3.5))
-            cashflow = ticker.cashflow
+            cashflow = self._fetch_with_retry(lambda: ticker.cashflow)
+            if cashflow is None or cashflow.empty:
+                raise Exception(f"Could not fetch cashflow for {symbol} after retries")
             self._store_yahoo_data(symbol, 'cashflow', cashflow)
             return cashflow
 
@@ -45,8 +60,9 @@ class YahooFinanceDataSource:
 
         if data is None or data.empty:
             ticker = self._get_ticker(symbol)
-            time.sleep(random.uniform(1, 3.5))
-            cashflow = ticker.quarterly_cashflow
+            cashflow = self._fetch_with_retry(lambda: ticker.quarterly_cashflow)
+            if cashflow is None or cashflow.empty:
+                raise Exception(f"Could not fetch quarterly cashflow for {symbol} after retries")
             self._store_yahoo_data(symbol, 'quarterly_cashflow', cashflow)
             return cashflow
 
@@ -57,8 +73,9 @@ class YahooFinanceDataSource:
 
         if data is None or data.empty:
             ticker = self._get_ticker(symbol)
-            time.sleep(random.uniform(1, 3.5))
-            info = pd.DataFrame([ticker.info])
+            info = self._fetch_with_retry(lambda: pd.DataFrame([ticker.info]))
+            if info is None or info.empty:
+                raise Exception(f"Could not fetch info for {symbol} after retries")
             self._store_yahoo_data(symbol, 'info', info)
             return info.iloc[0].to_dict()
 
@@ -69,19 +86,22 @@ class YahooFinanceDataSource:
 
         if data is None or data.empty:
             ticker = self._get_ticker(symbol)
-            time.sleep(random.uniform(1, 3.5))
-            income = ticker.financials
+            income = self._fetch_with_retry(lambda: ticker.financials)
+            if income is None or income.empty:
+                raise Exception(f"Could not fetch financials for {symbol} after retries")
             self._store_yahoo_data(symbol, 'financials', income)
             return income
 
         return data
+
     def _get_balance_sheet(self, symbol: str):
         data = self._get_yahoo_data(symbol, 'balance_sheet')
 
         if data is None or data.empty:
             ticker = self._get_ticker(symbol)
-            time.sleep(random.uniform(1, 3.5))
-            bs = ticker.balance_sheet
+            bs = self._fetch_with_retry(lambda: ticker.balance_sheet)
+            if bs is None or bs.empty:
+                raise Exception(f"Could not fetch balance sheet for {symbol} after retries")
             self._store_yahoo_data(symbol, 'balance_sheet', bs)
             return bs
 
@@ -89,10 +109,11 @@ class YahooFinanceDataSource:
 
     def _store_yahoo_data(self, symbol: str, dataset: str, data: pd.DataFrame):
         json_str = data.to_json()
-
+        jitter_days = random.uniform(-3, 3)
+        ts = pd.Timestamp.now() + timedelta(days=jitter_days)
         self.con.execute(
             "insert into yahoo_data (symbol, dataset, data, ts) values (?, ?, ?, ?)",
-            (symbol, dataset, json_str, pd.Timestamp.now())
+            (symbol, dataset, json_str, ts)
         )
     def _get_yahoo_data(self, symbol: str, dataset: str):
         # Check if we have cached data
@@ -111,14 +132,18 @@ class YahooFinanceDataSource:
         if not currency or currency == "EUR":
             return value
 
+        if currency in self._fx_cache:
+            return value * self._fx_cache[currency]
+
         fx_pair = f"{currency}EUR=X"
         try:
             fx_rate = self._get_ticker(fx_pair).history(period="1d")["Close"].iloc[-1]
         except Exception:
-            # Try inverted pair (e.g., EURUSD=X)
             inverted_pair = f"EUR{currency}=X"
             fx_rate_inv = self._get_ticker(inverted_pair).history(period="1d")["Close"].iloc[-1]
             fx_rate = 1 / fx_rate_inv
+
+        self._fx_cache[currency] = fx_rate
         return value * fx_rate
 
     def can_be_found(self, symbol: str) -> bool:

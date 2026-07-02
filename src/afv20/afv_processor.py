@@ -15,7 +15,7 @@ def process(db_file_path: str = '../../data/finance_data.db'):
     for idx, row in tickers.iterrows():
         symbol = row['yahoo_ticker']
 
-        exists = con.execute("select count(*) as cnt from afv_21_scores where symbol = ? and computed_at > current_timestamp - interval 1 month", (symbol,)).fetchone()
+        exists = con.execute("select count(*) as cnt from afv_21_scores where symbol = ? and computed_at > current_timestamp - interval 1 month and afv != -1000", (symbol,)).fetchone()
 
         if exists and exists[0] > 0:
             print(f"AFV Score for {symbol} already computed within a month, skipping...")
@@ -76,6 +76,10 @@ def process(db_file_path: str = '../../data/finance_data.db'):
             con.commit()
         except Exception as e:
             print(f"Error processing {symbol}: {e}, storing AFV -1000")
+            try:
+                con.execute("ROLLBACK")
+            except Exception:
+                pass
 
             con.execute("""
                 insert into afv_21_scores (symbol, afv, afv21, rp, rp21, fcf_yield, ocf_margin, min_ocf_margin, ocf_margin_volatility, sector_score, geo_score, debt_score, trend_score, vd_score, computed_at)
