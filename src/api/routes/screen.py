@@ -1,7 +1,10 @@
-from fastapi import APIRouter, Query
+from fastapi import APIRouter, Query, Request
 from typing import Optional, List
 from api.db import db_cursor
+from slowapi import Limiter
+from slowapi.util import get_remote_address
 
+limiter = Limiter(key_func=get_remote_address)
 router = APIRouter(prefix="/screen", tags=["screen"])
 
 CAP_RANGES = {
@@ -112,7 +115,9 @@ def screen_options():
 
 
 @router.get("")
+@limiter.limit("20/minute")
 def screen(
+    request:   Request,
     sector:    Optional[str]   = Query(None),
     industry:  Optional[str]   = Query(None),
     cap_size:  Optional[str]   = Query(None, description="micro|small|mid|large|mega"),

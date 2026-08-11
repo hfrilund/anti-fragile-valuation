@@ -1,7 +1,11 @@
-from fastapi import APIRouter, HTTPException, Query
+from fastapi import APIRouter, HTTPException, Query, Request
 from typing import Optional
 from api.db import db_cursor, DB_PATH as API_DB_PATH
 from holdings.sharpe import calculate as calculate_sharpe, calculate_history as calculate_sharpe_history
+from slowapi import Limiter
+from slowapi.util import get_remote_address
+
+limiter = Limiter(key_func=get_remote_address)
 
 router = APIRouter(prefix="/dashboard", tags=["dashboard"])
 
@@ -272,7 +276,9 @@ def ta_detail(symbol: str):
 
 
 @router.get("/sharpe/history")
+@limiter.limit("10/minute")
 def sharpe_history(
+    request: Request,
     window: int = Query(252, ge=30, le=504),
     risk_free_rate: float = Query(0.04, ge=0.0, le=1.0),
 ):
@@ -291,7 +297,8 @@ def holdings():
 
 
 @router.get("/fx-rates")
-def fx_rates(currencies: str = Query(..., description="Comma-separated currency codes, e.g. USD,SEK,GBP")):
+@limiter.limit("10/minute")
+def fx_rates(request: Request, currencies: str = Query(..., description="Comma-separated currency codes, e.g. USD,SEK,GBP")):
     import yfinance as yf
     ccys = [c.strip().upper() for c in currencies.split(',') if c.strip().upper() not in ('', 'EUR')]
     rates = {'EUR': 1.0}
@@ -307,7 +314,9 @@ def fx_rates(currencies: str = Query(..., description="Comma-separated currency 
 
 
 @router.get("/sharpe")
+@limiter.limit("10/minute")
 def sharpe(
+    request: Request,
     lookback_days: int = Query(365, ge=30, le=1825),
     risk_free_rate: float = Query(0.04, ge=0.0, le=1.0),
 ):
