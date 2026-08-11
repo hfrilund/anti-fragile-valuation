@@ -14,6 +14,7 @@ from holdings.holdings_report import (
     fetch_latest_scores,
     print_report,
     save_holdings,
+    save_fx_rates,
 )
 from technical_analysis.analyzer import run as run_ta, run_holdings as run_holdings_ta
 from price_history.fetcher import fetch_and_store as fetch_prices, ensure_for_ta
@@ -119,6 +120,15 @@ def cmd_run_daily(args):
             save_holdings(positions, db_path=args.db)
         except (ValueError, RuntimeError, TimeoutError) as e:
             print(f"  Skipping holdings update: {e}")
+
+    print("  Saving FX rates…")
+    with db.connect(args.db) as con:
+        ccys = [r[0] for r in con.execute("""
+            SELECT DISTINCT currency FROM holdings
+            WHERE fetched_at::DATE = current_date AND currency IS NOT NULL
+        """).fetchall()]
+    if ccys:
+        save_fx_rates(ccys, db_path=args.db)
     print()
 
     print("=== Step 4: Score all tickers ===")

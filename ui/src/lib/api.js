@@ -36,6 +36,7 @@ export const api = {
     earlyRecovery:    (params)  => request('/api/dashboard/early-recovery', params),
     taDetail:         (symbol)  => request(`/api/dashboard/ta/${symbol}`),
     holdings:         ()        => request('/api/dashboard/holdings'),
+    fxRates:          (ccys)    => request('/api/dashboard/fx-rates', { currencies: ccys.join(',') }),
     sharpe:           (params)  => request('/api/dashboard/sharpe', params).then(r => r.data),
     sharpeHistory:    (params)  => request('/api/dashboard/sharpe/history', params).then(r => r.data),
   },

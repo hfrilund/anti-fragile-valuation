@@ -107,6 +107,35 @@ def fetch_latest_scores(symbols: list[str], db_path: str = DB_PATH) -> dict[str,
     return result
 
 
+def save_fx_rates(currencies: list[str], db_path: str = DB_PATH) -> None:
+    """Fetch today's EURCCY rates from yfinance and store them."""
+    import yfinance as yf
+    from datetime import date
+    today = date.today()
+    rows = []
+    for ccy in currencies:
+        if ccy == 'EUR':
+            rows.append((today, 'EUR', 1.0))
+            continue
+        try:
+            rate = yf.Ticker(f'EUR{ccy}=X').fast_info.last_price
+            if rate:
+                rows.append((today, ccy, float(rate)))
+        except Exception:
+            print(f"  Warning: could not fetch EUR{ccy} rate")
+
+    if not rows:
+        return
+
+    with connect(db_path) as con:
+        con.executemany("""
+            INSERT INTO fx_rates (date, currency, eur_rate)
+            VALUES (?, ?, ?)
+            ON CONFLICT (date, currency) DO UPDATE SET eur_rate = excluded.eur_rate
+        """, rows)
+    print(f"  Saved FX rates for {[r[1] for r in rows]}")
+
+
 def save_holdings(positions: list[dict], db_path: str = DB_PATH) -> None:
     """Persist today's holdings snapshot, replacing any earlier snapshot from today."""
     rows = [

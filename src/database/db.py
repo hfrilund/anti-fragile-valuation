@@ -5,10 +5,10 @@ import duckdb
 DB_PATH = str(Path(__file__).resolve().parent.parent.parent / 'data' / 'finance_data.db')
 
 
-def connect(db_path: str = DB_PATH) -> duckdb.DuckDBPyConnection:
-    """Open a read-write connection, with a clear error if the file is locked."""
+def connect(db_path: str = DB_PATH, read_only: bool = False) -> duckdb.DuckDBPyConnection:
+    """Open a DuckDB connection. Pass read_only=True when no writes are needed."""
     try:
-        return duckdb.connect(db_path)
+        return duckdb.connect(db_path, read_only=read_only)
     except duckdb.IOException as e:
         if 'lock' in str(e).lower():
             print(f"ERROR: {db_path} is locked by another process.")
@@ -22,6 +22,14 @@ def connect(db_path: str = DB_PATH) -> duckdb.DuckDBPyConnection:
 def migrate(db_path: str = DB_PATH):
     """Run migrations for existing databases."""
     with connect(db_path) as con:
+        con.execute("""
+            CREATE TABLE IF NOT EXISTS fx_rates (
+                date     DATE    NOT NULL,
+                currency TEXT    NOT NULL,
+                eur_rate REAL    NOT NULL,
+                PRIMARY KEY (date, currency)
+            )
+        """)
         con.execute("""
             CREATE TABLE IF NOT EXISTS holding_thesis (
                 symbol     TEXT PRIMARY KEY,
@@ -42,6 +50,8 @@ def migrate(db_path: str = DB_PATH):
         """)
         con.execute("ALTER TABLE tickers ADD COLUMN IF NOT EXISTS is_dead boolean default false")
         con.execute("ALTER TABLE tickers ADD COLUMN IF NOT EXISTS dead_reason varchar")
+        con.execute("ALTER TABLE tickers ADD COLUMN IF NOT EXISTS dead_since TIMESTAMP")
+        con.execute("ALTER TABLE tickers ADD COLUMN IF NOT EXISTS last_revival_attempt TIMESTAMP")
         con.execute("ALTER TABLE technical_analysis ADD COLUMN IF NOT EXISTS ma50_bottom_days_ago INTEGER")
         con.execute("ALTER TABLE technical_analysis ADD COLUMN IF NOT EXISTS ma200_trend TEXT")
         con.execute("ALTER TABLE technical_analysis ADD COLUMN IF NOT EXISTS ma200_bottom_days_ago INTEGER")
@@ -147,6 +157,15 @@ def init_schema(db_path: str = DB_PATH):
                 low     REAL,
                 close   REAL,
                 volume  BIGINT
+            )
+        """)
+
+        con.execute("""
+            CREATE TABLE IF NOT EXISTS fx_rates (
+                date     DATE    NOT NULL,
+                currency TEXT    NOT NULL,
+                eur_rate REAL    NOT NULL,
+                PRIMARY KEY (date, currency)
             )
         """)
 

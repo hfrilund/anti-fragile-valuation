@@ -10,6 +10,8 @@
           <option :value="126">6 months</option>
           <option :value="252">1 year</option>
           <option :value="504">2 years</option>
+          <option :value="-1">YTD</option>
+          <option :value="0">All time</option>
         </select>
       </label>
       <label style="display:flex;align-items:center;gap:0.5rem;margin:0;font-size:0.85rem">
@@ -22,8 +24,9 @@
           <option :value="0.05">5%</option>
         </select>
       </label>
-      <span v-if="coverage" style="margin-left:auto;font-size:0.8rem;color:var(--pico-muted-color)">
-        {{ coverage }}
+      <span style="margin-left:auto;font-size:0.8rem;color:var(--pico-muted-color)">
+        <span v-if="hoverDate" style="font-weight:600;color:#ccc">{{ hoverDate }}</span>
+        <span v-else-if="coverage">{{ coverage }}</span>
       </span>
     </div>
 
@@ -36,7 +39,10 @@
     </p>
 
     <template v-else>
-      <div class="chart-label">Sharpe ratio (rolling {{ windowLabel }})</div>
+      <div class="chart-label">Portfolio value (indexed, full history)</div>
+      <div ref="valueEl" style="margin-bottom:8px"></div>
+
+      <div class="chart-label" style="margin-top:12px">Sharpe ratio (rolling {{ windowLabel }})</div>
       <div ref="sharpeEl" style="margin-bottom:8px"></div>
 
       <div class="chart-label" style="margin-top:12px">Annualised return</div>
@@ -58,11 +64,13 @@ import { api } from '../lib/api'
 
 const window = ref(252)
 const rfr    = ref(0.04)
-const series = ref([])
-const loading = ref(false)
-const error   = ref(null)
-const coverage = ref(null)
+const series    = ref([])
+const loading   = ref(false)
+const error     = ref(null)
+const coverage  = ref(null)
+const hoverDate = ref(null)
 
+const valueEl  = ref(null)
 const sharpeEl = ref(null)
 const returnEl = ref(null)
 const volEl    = ref(null)
@@ -71,8 +79,17 @@ const ddEl     = ref(null)
 let charts = []
 let ro = null
 
+function ytdFromDate() {
+  return new Date(new Date().getFullYear(), 0, 1).toISOString().split('T')[0]
+}
+
+function ytdTradingDays() {
+  const daysSinceJan1 = Math.floor((Date.now() - new Date(new Date().getFullYear(), 0, 1)) / 86400000)
+  return Math.max(30, Math.round(daysSinceJan1 * 252 / 365))
+}
+
 const windowLabel = computed(() => {
-  const map = { 63: '3 months', 126: '6 months', 252: '1 year', 504: '2 years' }
+  const map = { '-1': 'YTD', 0: 'all time', 63: '3 months', 126: '6 months', 252: '1 year', 504: '2 years' }
   return map[window.value] ?? `${window.value} days`
 })
 
@@ -104,6 +121,7 @@ function destroyCharts() {
   charts = []
   ro?.disconnect()
   ro = null
+  hoverDate.value = null
 }
 
 function pctFmt(n) {
@@ -113,12 +131,23 @@ function pctFmt(n) {
 function build(data) {
   destroyCharts()
 
+  const valueData  = data.map(d => ({ time: d.date, value: d.portfolio_value }))
   const sharpeData = data.map(d => ({ time: d.date, value: d.sharpe }))
   const returnData = data.map(d => ({ time: d.date, value: d.ann_return }))
   const volData    = data.map(d => ({ time: d.date, value: d.ann_vol }))
   const ddData     = data.map(d => ({ time: d.date, value: d.max_drawdown }))
 
-  const w = sharpeEl.value.clientWidth
+  const w = valueEl.value.clientWidth
+
+  // ── Portfolio value chart ──
+  const vc2 = createChart(valueEl.value, { ...baseOptions(220), width: w })
+  vc2.addSeries(AreaSeries, {
+    lineColor: '#42a5f5', topColor: '#42a5f533', bottomColor: '#42a5f500',
+    lineWidth: 2, lastValueVisible: true, priceLineVisible: false, title: 'Value',
+    priceFormat: { type: 'price', precision: 3, minMove: 0.001 },
+  }).setData(valueData)
+  vc2.timeScale().fitContent()
+  charts.push(vc2)
 
   // ── Sharpe chart ──
   const sc = createChart(sharpeEl.value, { ...baseOptions(220), width: w })
@@ -164,6 +193,25 @@ function build(data) {
 
   syncTimescales(...charts)
 
+  charts.forEach(c => {
+    c.subscribeCrosshairMove(param => {
+      if (param.time) {
+        const d = new Date(param.time)
+        hoverDate.value = d.toLocaleDateString(undefined, { year: 'numeric', month: 'short', day: 'numeric' })
+      } else {
+        hoverDate.value = null
+      }
+    })
+  })
+
+  if (window.value !== 0) {
+    const lastDate = data[data.length - 1].date
+    const fromDate = window.value === -1
+      ? ytdFromDate()
+      : (() => { const d = new Date(lastDate); d.setDate(d.getDate() - Math.round(window.value * 365 / 252)); return d.toISOString().split('T')[0] })()
+    charts[0].timeScale().setVisibleRange({ from: fromDate, to: lastDate })
+  }
+
   ro = new ResizeObserver(() => {
     const cw = sharpeEl.value?.clientWidth ?? 0
     charts.forEach(c => c.applyOptions({ width: cw }))
@@ -178,7 +226,8 @@ async function load() {
   coverage.value = null
   destroyCharts()
   try {
-    const data = await api.dashboard.sharpeHistory({ window: window.value, risk_free_rate: rfr.value })
+    const apiWindow = window.value === 0 ? 504 : window.value === -1 ? ytdTradingDays() : window.value
+    const data = await api.dashboard.sharpeHistory({ window: apiWindow, risk_free_rate: rfr.value })
     if (!data || !data.length) {
       loading.value = false
       return

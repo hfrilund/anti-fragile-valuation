@@ -10,14 +10,37 @@ _NEEDED_DATASETS = {'cashflow', 'financials', 'balance_sheet', 'info'}
 _FINANCIAL_DATASETS = {'cashflow', 'financials', 'balance_sheet'}
 _CONSECUTIVE_FAILURE_THRESHOLD = 2
 
+_REVIVAL_SAMPLE_SIZE = 50
+_REVIVAL_MIN_INTERVAL_DAYS = 30
+_REVIVAL_GIVE_UP_AFTER_DAYS = 365
+
 
 def _mark_dead(con, symbol: str, reason: str):
-    con.execute(
-        "update tickers set is_dead = true, dead_reason = ? where yahoo_ticker = ?",
-        (reason, symbol)
-    )
+    # Preserve original dead_since so revival tracking stays accurate
+    con.execute("""
+        UPDATE tickers SET
+            is_dead = true,
+            dead_reason = ?,
+            dead_since = CASE WHEN dead_since IS NULL THEN current_timestamp ELSE dead_since END
+        WHERE yahoo_ticker = ?
+    """, (reason, symbol))
     con.commit()
     print(f"Marked dead: {symbol} ({reason})")
+
+
+def _pick_revival_candidates(con, n: int = _REVIVAL_SAMPLE_SIZE) -> list[str]:
+    """Return up to n auto-dead tickers eligible for a revival attempt today."""
+    rows = con.execute("""
+        SELECT yahoo_ticker FROM tickers
+        WHERE is_dead = true
+          AND dead_reason != 'manually marked dead'
+          AND (dead_since IS NULL OR dead_since >= current_timestamp - INTERVAL ? DAYS)
+          AND (last_revival_attempt IS NULL
+               OR last_revival_attempt < current_timestamp - INTERVAL ? DAYS)
+        ORDER BY random()
+        LIMIT ?
+    """, (_REVIVAL_GIVE_UP_AFTER_DAYS, _REVIVAL_MIN_INTERVAL_DAYS, n)).fetchall()
+    return [r[0] for r in rows]
 
 
 def _consecutive_failures(con, symbol: str) -> int:
@@ -38,6 +61,16 @@ def _consecutive_failures(con, symbol: str) -> int:
 def process(db_file_path: str = '../../data/finance_data.db'):
     con = duckdb.connect(db_file_path)
     yf = yahoo.YahooFinanceDataSource(con)
+
+    revival_candidates = _pick_revival_candidates(con)
+    if revival_candidates:
+        print(f"\n--- Attempting revival of {len(revival_candidates)} dead ticker(s) ---")
+        placeholders = ', '.join('?' * len(revival_candidates))
+        con.execute(
+            f"UPDATE tickers SET is_dead = false WHERE yahoo_ticker IN ({placeholders})",
+            revival_candidates
+        )
+        con.commit()
 
     tickers = con.execute("select * from tickers where is_dead is not true").fetchdf()
 
@@ -125,6 +158,29 @@ def process(db_file_path: str = '../../data/finance_data.db'):
                 values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, current_timestamp)
             """, (symbol, -1000, -1000, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0))
             con.commit()
+
+    if revival_candidates:
+        revived, failed = [], []
+        for symbol in revival_candidates:
+            still_dead = con.execute(
+                "SELECT is_dead FROM tickers WHERE yahoo_ticker = ?", (symbol,)
+            ).fetchone()
+            if still_dead and still_dead[0]:
+                failed.append(symbol)
+            else:
+                revived.append(symbol)
+
+        if revived:
+            print(f"\n--- Revived {len(revived)} ticker(s): {', '.join(revived)} ---")
+
+        if failed:
+            placeholders = ', '.join('?' * len(failed))
+            con.execute(
+                f"UPDATE tickers SET last_revival_attempt = current_timestamp WHERE yahoo_ticker IN ({placeholders})",
+                failed
+            )
+            con.commit()
+            print(f"--- {len(failed)} revival attempt(s) failed; will retry in {_REVIVAL_MIN_INTERVAL_DAYS} days ---")
 
     con.close()
 

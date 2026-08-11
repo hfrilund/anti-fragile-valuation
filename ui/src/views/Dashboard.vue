@@ -5,6 +5,38 @@
       Last run: {{ runDate }}
     </p>
 
+    <!-- Portfolio MTM summary -->
+    <div v-if="mtmSummary.length" style="margin-bottom:2rem">
+      <!-- Hero: total EUR value -->
+      <div class="mtm-hero">
+        <div class="mtm-hero-label">Total portfolio value</div>
+        <div class="mtm-hero-value">
+          {{ totalEur != null ? '€' + fmtLarge(totalEur) : '—' }}
+        </div>
+        <div v-if="totalPnlEur != null" class="mtm-hero-pnl" :class="totalPnlEur >= 0 ? 'pnl-pos' : 'pnl-neg'">
+          {{ totalPnlEur >= 0 ? '+' : '' }}€{{ fmtLarge(totalPnlEur) }}
+          ({{ totalPnlPct != null ? (totalPnlPct >= 0 ? '+' : '') + totalPnlPct.toFixed(1) + '%' : '' }})
+          <span style="font-size:0.7rem;opacity:0.7;margin-left:0.3rem">vs cost basis</span>
+        </div>
+      </div>
+
+      <!-- Per-currency breakdown -->
+      <div class="stats-row" style="margin-top:1rem">
+        <div class="stat-card" v-for="g in mtmSummary" :key="g.currency">
+          <div class="stat-label">{{ g.currency }}</div>
+          <div class="stat-value">{{ fmtLarge(g.value) }}</div>
+          <div class="stat-sub" :class="g.pnl >= 0 ? 'pnl-pos' : 'pnl-neg'">
+            {{ g.pnl >= 0 ? '+' : '' }}{{ fmtLarge(g.pnl) }} ({{ g.pnl_pct.toFixed(1) }}%)
+          </div>
+        </div>
+        <div class="stat-card">
+          <div class="stat-label">Positions</div>
+          <div class="stat-value">{{ holdings.length }}</div>
+          <div class="stat-sub">holdings</div>
+        </div>
+      </div>
+    </div>
+
     <section>
       <h3>Holdings</h3>
 
@@ -201,7 +233,7 @@
 </template>
 
 <script setup>
-import { ref, watch, onMounted } from 'vue'
+import { ref, watch, onMounted, computed } from 'vue'
 import { RouterLink } from 'vue-router'
 import { api } from '../lib/api'
 
@@ -214,6 +246,7 @@ const runDate = ref(null)
 
 const sharpe = ref(null)
 const sharpeLoading = ref(true)
+const fxRates = ref({})  // { EUR: 1, USD: 1.08, SEK: 11.2, ... } (EUR per 1 CCY unit)
 
 const potentialCrosses = ref([])
 const crossesError = ref(null)
@@ -223,8 +256,65 @@ const earlyRecovery = ref([])
 const recoveryError = ref(null)
 const recoveryLoading = ref(true)
 
+const mtmSummary = computed(() => {
+  if (!holdings.value.length) return []
+  const byCcy = {}
+  for (const h of holdings.value) {
+    const c = h.currency || '?'
+    if (!byCcy[c]) byCcy[c] = { currency: c, value: 0, cost: 0 }
+    byCcy[c].value += h.pos_value  || 0
+    byCcy[c].cost  += h.cost_basis || 0
+  }
+  return Object.values(byCcy)
+    .map(g => ({ ...g, pnl: g.value - g.cost, pnl_pct: g.cost > 0 ? (g.value - g.cost) / g.cost * 100 : 0 }))
+    .sort((a, b) => b.value - a.value)
+})
+
+// Convert CCY amount to EUR using EURCCY=X rates (rate = how many CCY per 1 EUR)
+function toEur(amount, ccy) {
+  if (ccy === 'EUR') return amount
+  const rate = fxRates.value[ccy]
+  return rate ? amount / rate : null
+}
+
+const totalEur = computed(() => {
+  if (!mtmSummary.value.length) return null
+  let total = 0
+  for (const g of mtmSummary.value) {
+    const eur = toEur(g.value, g.currency)
+    if (eur == null) return null
+    total += eur
+  }
+  return total
+})
+
+const totalPnlEur = computed(() => {
+  if (!mtmSummary.value.length) return null
+  let pnl = 0
+  for (const g of mtmSummary.value) {
+    const eur = toEur(g.pnl, g.currency)
+    if (eur == null) return null
+    pnl += eur
+  }
+  return pnl
+})
+
+const totalPnlPct = computed(() => {
+  if (totalPnlEur.value == null || totalEur.value == null) return null
+  const cost = totalEur.value - totalPnlEur.value
+  return cost > 0 ? (totalPnlEur.value / cost) * 100 : null
+})
+
 function fmt(n) {
   return n?.toLocaleString(undefined, { minimumFractionDigits: 0, maximumFractionDigits: 0 })
+}
+function fmtLarge(n) {
+  if (n == null) return '—'
+  const abs = Math.abs(n)
+  const sign = n < 0 ? '-' : ''
+  if (abs >= 1_000_000) return sign + (abs / 1_000_000).toFixed(2) + 'M'
+  if (abs >= 1_000)     return sign + (abs / 1_000).toFixed(1) + 'K'
+  return sign + abs.toFixed(0)
 }
 function pct(n) {
   if (n == null) return 'N/A'
@@ -299,6 +389,10 @@ onMounted(async () => {
   try {
     const data = await api.dashboard.holdings()
     holdings.value = data.results
+    const ccys = [...new Set(data.results.map(h => h.currency).filter(Boolean))]
+    if (ccys.length) {
+      fxRates.value = await api.dashboard.fxRates(ccys)
+    }
   } catch (e) {
     holdingsError.value = e.message
   }

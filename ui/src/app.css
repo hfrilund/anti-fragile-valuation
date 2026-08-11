@@ -72,3 +72,49 @@ th.sorted.asc::after { content: ' ↑'; }
   color: var(--pico-muted-color);
   margin-top: 0.15rem;
 }
+
+.mtm-hero {
+  padding: 1.25rem 1.5rem;
+  background: var(--pico-card-background-color, #1a1a1a);
+  border: 1px solid var(--pico-muted-border-color, #333);
+  border-radius: 8px;
+}
+.mtm-hero-label {
+  font-size: 0.75rem;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: var(--pico-muted-color);
+  margin-bottom: 0.25rem;
+}
+.mtm-hero-value {
+  font-size: 2.4rem;
+  font-weight: 700;
+  line-height: 1.1;
+  letter-spacing: -0.01em;
+}
+.mtm-hero-pnl {
+  font-size: 1rem;
+  font-weight: 600;
+  margin-top: 0.3rem;
+}
+
+@media (max-width: 600px) {
+  .mtm-hero-value { font-size: 1.9rem; }
+}
+  :root { --pico-font-size: 13px; }
+
+  header.container-fluid { padding: 0.5rem 0.75rem !important; }
+  nav { display: flex; flex-wrap: wrap; gap: 0.25rem 0; }
+  nav a { margin-right: 1rem; }
+
+  main.container-fluid { padding: 1rem 0.75rem !important; }
+
+  .stats-row { gap: 0.65rem; }
+  .stat-card { min-width: calc(50% - 0.65rem); padding: 0.6rem 0.9rem; }
+  .stat-value { font-size: 1.15rem; }
+
+  h2 { font-size: 1.3rem; }
+  h3 { font-size: 1.05rem; }
+
+  section { margin-top: 1.5rem !important; }
+}

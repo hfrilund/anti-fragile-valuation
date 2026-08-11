@@ -51,7 +51,7 @@ def calculate(db_path: str = DB_PATH, lookback_days: int = 365,
     if data is insufficient. Raises ValueError with a human-readable message
     if holdings or price history are missing.
     """
-    with connect(db_path) as con:
+    with connect(db_path, read_only=True) as con:
         weights_raw = _load_holdings_weights(con)
         if not weights_raw:
             raise ValueError("No holdings in DB. Run 'holdings save' first.")
@@ -122,7 +122,7 @@ def calculate_history(db_path: str = DB_PATH, window: int = 252,
     for every date in price history. Uses current holdings as fixed weights.
     window = rolling window in trading days (default 252 = 1 year).
     """
-    with connect(db_path) as con:
+    with connect(db_path, read_only=True) as con:
         weights_raw = _load_holdings_weights(con)
         if not weights_raw:
             raise ValueError("No holdings in DB. Run 'holdings save' first.")
@@ -158,6 +158,9 @@ def calculate_history(db_path: str = DB_PATH, window: int = 252,
 
     max_dd = portfolio_returns.rolling(window, min_periods=min_periods).apply(_max_dd, raw=True)
 
+    cum_value = (1 + portfolio_returns).cumprod()
+    cum_value = cum_value / cum_value.iloc[0]
+
     result = []
     for ts, sh, ar, av, md in zip(
         sharpe.index, sharpe.values, ann_return.values, ann_vol.values, max_dd.values
@@ -165,11 +168,12 @@ def calculate_history(db_path: str = DB_PATH, window: int = 252,
         if any(np.isnan(v) for v in [sh, ar, av, md]):
             continue
         result.append({
-            "date":         str(ts.date()),
-            "sharpe":       round(float(sh), 4),
-            "ann_return":   round(float(ar), 4),
-            "ann_vol":      round(float(av), 4),
-            "max_drawdown": round(float(md), 4),
+            "date":            str(ts.date()),
+            "sharpe":          round(float(sh), 4),
+            "ann_return":      round(float(ar), 4),
+            "ann_vol":         round(float(av), 4),
+            "max_drawdown":    round(float(md), 4),
+            "portfolio_value": round(float(cum_value.loc[ts]), 4),
         })
 
     return result

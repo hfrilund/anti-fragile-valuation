@@ -290,6 +290,22 @@ def holdings():
     return {"count": len(rows), "results": rows}
 
 
+@router.get("/fx-rates")
+def fx_rates(currencies: str = Query(..., description="Comma-separated currency codes, e.g. USD,SEK,GBP")):
+    import yfinance as yf
+    ccys = [c.strip().upper() for c in currencies.split(',') if c.strip().upper() not in ('', 'EUR')]
+    rates = {'EUR': 1.0}
+    for ccy in ccys:
+        try:
+            info = yf.Ticker(f'EUR{ccy}=X').fast_info
+            rate = getattr(info, 'last_price', None)
+            if rate:
+                rates[ccy] = float(rate)
+        except Exception:
+            pass
+    return rates
+
+
 @router.get("/sharpe")
 def sharpe(
     lookback_days: int = Query(365, ge=30, le=1825),
