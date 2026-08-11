@@ -75,8 +75,7 @@ def calculate(db_path: str = DB_PATH, lookback_days: int = 365,
     weight_vec = pd.Series({s: v / total_value for s, v in weights.items()})
     weight_vec = weight_vec.reindex(prices.columns).fillna(0.0)
 
-    # Fill NaN with 0 for local holidays / non-trading days
-    daily_returns = prices.pct_change().fillna(0.0)
+    daily_returns = prices.ffill().pct_change(fill_method=None).fillna(0.0)
     portfolio_returns = daily_returns.dot(weight_vec)
 
     # Trim leading zeros before price data begins
@@ -141,7 +140,7 @@ def calculate_history(db_path: str = DB_PATH, window: int = 252,
     weight_vec = pd.Series({s: v / total_value for s, v in weights.items()})
     weight_vec = weight_vec.reindex(prices.columns).fillna(0.0)
 
-    daily_returns = prices.pct_change().fillna(0.0)
+    daily_returns = prices.ffill().pct_change(fill_method=None).fillna(0.0)
     portfolio_returns = daily_returns.dot(weight_vec)
     portfolio_returns = portfolio_returns.loc[portfolio_returns.ne(0.0).cummax()]
 
