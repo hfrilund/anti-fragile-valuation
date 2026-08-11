@@ -31,11 +31,16 @@ _SECTORS_BY_INDUSTRY: dict[str, list[str]] = {
 
 SCREEN_SQL = """
 WITH latest_scores AS (
-    SELECT DISTINCT ON (symbol)
-        symbol, afv21, rp21, computed_at
-    FROM afv_21_scores
-    WHERE afv21 > -1000
-    ORDER BY symbol, computed_at DESC
+    SELECT symbol, afv21, rp21
+    FROM (
+        SELECT DISTINCT ON (symbol)
+            symbol, afv21, rp21
+        FROM afv_21_scores
+        WHERE afv21 > -1000
+        ORDER BY symbol, computed_at DESC
+    )
+    ORDER BY afv21 DESC
+    LIMIT $candidate_limit
 ),
 latest_info AS (
     SELECT DISTINCT ON (yd.symbol)
@@ -129,6 +134,7 @@ def screen(
 
     with db_cursor() as conn:
         rows = _to_dicts(conn, SCREEN_SQL, {
+            "candidate_limit": max(1500, limit * 10),
             "min_afv21":       min_afv21,
             "sector":          sector,
             "industry":        industry,
