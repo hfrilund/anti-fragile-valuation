@@ -100,7 +100,7 @@ th.sorted.asc::after { content: ' ↑'; }
 
 @media (max-width: 600px) {
   .mtm-hero-value { font-size: 1.9rem; }
-}
+
   :root { --pico-font-size: 13px; }
 
   header.container-fluid { padding: 0.5rem 0.75rem !important; }
