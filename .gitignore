@@ -17,3 +17,5 @@ csv_export/
 holdings_data/
 *.pyc
 .env
+finance_data.db
+*.pdf
