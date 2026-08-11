@@ -1,0 +1,8 @@
+{$AFV_DOMAIN} {
+    # Serve the built Vue app
+    root * /opt/afv/ui/dist
+    file_server
+
+    # Proxy API requests to uvicorn
+    reverse_proxy /api/* localhost:{$AFV_API_PORT:8000}
+}

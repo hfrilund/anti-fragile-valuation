@@ -7,7 +7,13 @@ venv/
 __pycache__/
 data/
 dist/
+csv_export/
+ui/dist/
+ui/node_modules/
 data_backup/
 *.egg-info/
 csv_export/
 *.ipynb_checkpoints/
+holdings_data/
+*.pyc
+.env

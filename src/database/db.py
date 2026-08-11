@@ -22,6 +22,24 @@ def connect(db_path: str = DB_PATH) -> duckdb.DuckDBPyConnection:
 def migrate(db_path: str = DB_PATH):
     """Run migrations for existing databases."""
     with connect(db_path) as con:
+        con.execute("""
+            CREATE TABLE IF NOT EXISTS holding_thesis (
+                symbol     TEXT PRIMARY KEY,
+                thesis     TEXT NOT NULL DEFAULT '',
+                updated_at TIMESTAMP DEFAULT current_timestamp
+            )
+        """)
+        con.execute("""
+            CREATE TABLE IF NOT EXISTS price_history (
+                symbol  VARCHAR,
+                date    DATE,
+                open    REAL,
+                high    REAL,
+                low     REAL,
+                close   REAL,
+                volume  BIGINT
+            )
+        """)
         con.execute("ALTER TABLE tickers ADD COLUMN IF NOT EXISTS is_dead boolean default false")
         con.execute("ALTER TABLE tickers ADD COLUMN IF NOT EXISTS dead_reason varchar")
         con.execute("ALTER TABLE technical_analysis ADD COLUMN IF NOT EXISTS ma50_bottom_days_ago INTEGER")
@@ -117,6 +135,18 @@ def init_schema(db_path: str = DB_PATH):
                 mark_price   REAL,
                 pos_value    REAL,
                 cost_basis   REAL
+            )
+        """)
+
+        con.execute("""
+            CREATE TABLE IF NOT EXISTS price_history (
+                symbol  VARCHAR,
+                date    DATE,
+                open    REAL,
+                high    REAL,
+                low     REAL,
+                close   REAL,
+                volume  BIGINT
             )
         """)
 

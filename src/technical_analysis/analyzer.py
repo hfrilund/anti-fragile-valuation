@@ -1,17 +1,13 @@
-import random
 import sys
-import time
 from pathlib import Path
 
 import numpy as np
 import pandas as pd
-import yfinance as yf
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 from database.db import connect
 
 _TOP_N = 500
-_BATCH_SIZE = 50
 
 
 def _top_symbols(con) -> list[tuple[str, float]]:
@@ -32,30 +28,30 @@ def _top_symbols(con) -> list[tuple[str, float]]:
     """, (_TOP_N,)).fetchall()
 
 
-def _fetch_histories(symbols: list[str]) -> dict[str, pd.DataFrame]:
-    histories = {}
-    total_batches = (len(symbols) + _BATCH_SIZE - 1) // _BATCH_SIZE
+def _load_from_db(con, symbols: list[str]) -> dict[str, pd.DataFrame]:
+    """Load price history from DB for the given symbols, returning DataFrames keyed by symbol."""
+    if not symbols:
+        return {}
 
-    for i in range(0, len(symbols), _BATCH_SIZE):
-        batch = symbols[i:i + _BATCH_SIZE]
-        batch_num = i // _BATCH_SIZE + 1
-        print(f"  Fetching price history batch {batch_num}/{total_batches} ({len(batch)} symbols)...")
+    sym_df = pd.DataFrame({'symbol': symbols})
+    con.register('_ta_sym_list', sym_df)
+    try:
+        raw = con.execute("""
+            SELECT p.symbol, p.date, p.open, p.high, p.low, p.close, p.volume
+            FROM price_history p
+            JOIN _ta_sym_list s ON p.symbol = s.symbol
+            ORDER BY p.symbol, p.date ASC
+        """).fetchdf()
+    finally:
+        con.unregister('_ta_sym_list')
 
-        try:
-            data = yf.download(batch, period='1y', auto_adjust=True, progress=False)
-            if not data.empty:
-                for symbol in batch:
-                    try:
-                        df = data.xs(symbol, axis=1, level=1).dropna(how='all')
-                        if not df.empty and 'Close' in df.columns:
-                            histories[symbol] = df
-                    except KeyError:
-                        pass
-        except Exception as e:
-            print(f"  Batch {batch_num} download error: {e}")
-
-        if i + _BATCH_SIZE < len(symbols):
-            time.sleep(random.uniform(2, 4))
+    histories: dict[str, pd.DataFrame] = {}
+    for symbol, group in raw.groupby('symbol'):
+        g = group[['date', 'open', 'high', 'low', 'close', 'volume']].copy()
+        g['date'] = pd.to_datetime(g['date'])
+        g = g.set_index('date')
+        g.columns = ['Open', 'High', 'Low', 'Close', 'Volume']
+        histories[symbol] = g
 
     return histories
 
@@ -306,6 +302,7 @@ def _print_summary(results: list[dict]):
     print(f"{'='*60}\n")
 
 
+
 def _insert_results(con, results: list[dict]) -> None:
     for r in results:
         con.execute("""
@@ -356,8 +353,11 @@ def run(db_path: str):
         symbols = [s for s, _ in symbol_scores]
         print(f"Running technical analysis on top {len(symbols)} symbols by AFV21 score...")
 
-        histories = _fetch_histories(symbols)
-        print(f"Price history fetched: {len(histories)}/{len(symbols)} symbols.")
+        histories = _load_from_db(con, symbols)
+        print(f"Loaded price history from DB: {len(histories)}/{len(symbols)} symbols.")
+        if not histories:
+            print("No price history in DB. Run 'prices fetch --period 2y' first.")
+            return
 
         results = []
         for symbol, afv21 in symbol_scores:
@@ -395,7 +395,11 @@ def run_holdings(db_path: str):
         print(f"Running technical analysis for {len(symbols)} holdings: {', '.join(symbols)}")
         score_map = _latest_afv21(con, symbols)
 
-        histories = _fetch_histories(symbols)
+        histories = _load_from_db(con, symbols)
+        print(f"Loaded price history from DB: {len(histories)}/{len(symbols)} symbols.")
+        if not histories:
+            print("No price history in DB. Run 'prices fetch --period 2y' first.")
+            return
 
         results = []
         for symbol in symbols:
@@ -405,10 +409,6 @@ def run_holdings(db_path: str):
             row = _analyze(symbol, df, score_map.get(symbol))
             if row:
                 results.append(row)
-
-        if not results:
-            print("No TA results for holdings.")
-            return
 
         computed_syms = [r['symbol'] for r in results]
         placeholders  = ', '.join('?' * len(computed_syms))

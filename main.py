@@ -16,6 +16,8 @@ from holdings.holdings_report import (
     save_holdings,
 )
 from technical_analysis.analyzer import run as run_ta, run_holdings as run_holdings_ta
+from price_history.fetcher import fetch_and_store as fetch_prices, ensure_for_ta
+from holdings.sharpe import compute as compute_sharpe
 
 DEFAULT_DB = str(Path(__file__).resolve().parent / 'data' / 'finance_data.db')
 
@@ -123,12 +125,20 @@ def cmd_run_daily(args):
     process(args.db)
     print()
 
-    print("=== Step 5: Technical analysis (top 500) ===")
+    print("=== Step 5: Ensure price history ===")
+    ensure_for_ta(args.db)
+    print()
+
+    print("=== Step 6: Technical analysis (top 500) ===")
     run_ta(args.db)
     print()
 
-    print("=== Step 6: Holdings technical analysis ===")
+    print("=== Step 7: Holdings technical analysis ===")
     run_holdings_ta(args.db)
+
+
+def cmd_prices_fetch(args):
+    fetch_prices(args.db, period=args.period, top=args.top)
 
 
 def cmd_ta_run(args):
@@ -174,6 +184,14 @@ def cmd_holdings_ta(args):
     run_holdings_ta(args.db)
 
 
+def cmd_holdings_sharpe(args):
+    compute_sharpe(
+        db_path=args.db,
+        lookback_days=args.lookback,
+        risk_free_rate=args.risk_free_rate,
+    )
+
+
 def main():
     parser = argparse.ArgumentParser(prog='afv', description='AFV management CLI')
     parser.add_argument('--db', default=DEFAULT_DB, metavar='PATH',
@@ -208,6 +226,19 @@ def main():
     run_sub = run_parser.add_subparsers(dest='cmd', required=True)
     run_sub.add_parser('daily', help='Full daily run: update schema, refresh tickers, score all, technical analysis')
 
+    # --- prices group ---
+    prices_parser = sub.add_parser('prices', help='Price history commands')
+    prices_sub = prices_parser.add_subparsers(dest='cmd', required=True)
+    p_fetch = prices_sub.add_parser('fetch', help='Fetch and store OHLCV price history')
+    p_fetch.add_argument(
+        '--period', default='7d', metavar='PERIOD',
+        help='yfinance period string (default: 7d for daily updates, use 2y for initial backfill)',
+    )
+    p_fetch.add_argument(
+        '--top', type=int, default=2000, metavar='N',
+        help='fetch price history for top N symbols by AFV21 score (default: 2000)',
+    )
+
     # --- ta group ---
     ta_parser = sub.add_parser('ta', help='Technical analysis commands')
     ta_sub = ta_parser.add_subparsers(dest='cmd', required=True)
@@ -235,6 +266,16 @@ def main():
 
     holdings_sub.add_parser('ta', help='Run technical analysis on current holdings')
 
+    p_sharpe = holdings_sub.add_parser('sharpe', help='Compute portfolio Sharpe ratio from price history')
+    p_sharpe.add_argument(
+        '--lookback', type=int, default=365, metavar='DAYS',
+        help='Number of calendar days of price history to use (default: 365)',
+    )
+    p_sharpe.add_argument(
+        '--risk-free-rate', type=float, default=0.04, metavar='RATE',
+        help='Annualised risk-free rate as a decimal (default: 0.04 = 4%%)',
+    )
+
     args = parser.parse_args()
 
     if args.group == 'db':
@@ -259,6 +300,10 @@ def main():
         if args.cmd == 'daily':
             cmd_run_daily(args)
 
+    elif args.group == 'prices':
+        if args.cmd == 'fetch':
+            cmd_prices_fetch(args)
+
     elif args.group == 'ta':
         if args.cmd == 'run':
             cmd_ta_run(args)
@@ -270,6 +315,8 @@ def main():
             cmd_holdings_save(args)
         elif args.cmd == 'ta':
             cmd_holdings_ta(args)
+        elif args.cmd == 'sharpe':
+            cmd_holdings_sharpe(args)
 
 
 if __name__ == '__main__':
