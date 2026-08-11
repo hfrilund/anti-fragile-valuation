@@ -15,25 +15,19 @@ CAP_RANGES = {
     "mega":   (200_000_000_000, None),
 }
 
-OPTIONS_SQL = """
-WITH scored_symbols AS (
-    SELECT DISTINCT symbol FROM afv_21_scores WHERE afv21 > -1000
-)
-SELECT sector, industry
-FROM (
-    SELECT DISTINCT ON (yd.symbol)
-        yd.symbol,
-        json_extract_string(yd.data, '$.sector.0')   AS sector,
-        json_extract_string(yd.data, '$.industry.0') AS industry
-    FROM yahoo_data yd
-    JOIN scored_symbols s ON yd.symbol = s.symbol
-    WHERE yd.dataset = 'info'
-    ORDER BY yd.symbol, yd.ts DESC
-) latest
-WHERE sector IS NOT NULL AND sector != ''
-GROUP BY sector, industry
-ORDER BY sector, industry
-"""
+_SECTORS_BY_INDUSTRY: dict[str, list[str]] = {
+    "Basic Materials": ["Agricultural Inputs","Aluminum","Building Materials","Chemicals","Coking Coal","Copper","Gold","Lumber & Wood Production","Other Industrial Metals & Mining","Other Precious Metals & Mining","Paper & Paper Products","Silver","Specialty Chemicals","Steel"],
+    "Communication Services": ["Advertising Agencies","Broadcasting","Electronic Gaming & Multimedia","Entertainment","Internet Content & Information","Publishing","Telecom Services"],
+    "Consumer Cyclical": ["Apparel Manufacturing","Apparel Retail","Auto & Truck Dealerships","Auto Manufacturers","Auto Parts","Department Stores","Footwear & Accessories","Furnishings, Fixtures & Appliances","Gambling","Home Improvement Retail","Internet Retail","Leisure","Lodging","Luxury Goods","Packaging & Containers","Personal Services","Recreational Vehicles","Residential Construction","Resorts & Casinos","Restaurants","Specialty Retail","Textile Manufacturing","Travel Services"],
+    "Consumer Defensive": ["Beverages - Brewers","Beverages - Non-Alcoholic","Beverages - Wineries & Distilleries","Confectioners","Discount Stores","Education & Training Services","Farm Products","Food Distribution","Grocery Stores","Household & Personal Products","Packaged Foods","Tobacco"],
+    "Energy": ["Oil & Gas Drilling","Oil & Gas E&P","Oil & Gas Equipment & Services","Oil & Gas Integrated","Oil & Gas Midstream","Oil & Gas Refining & Marketing","Thermal Coal","Uranium"],
+    "Financial Services": ["Asset Management","Banks - Diversified","Banks - Regional","Capital Markets","Credit Services","Financial Conglomerates","Financial Data & Stock Exchanges","Insurance - Diversified","Insurance - Life","Insurance - Property & Casualty","Insurance - Reinsurance","Insurance - Specialty","Insurance Brokers","Mortgage Finance","Shell Companies"],
+    "Healthcare": ["Biotechnology","Diagnostics & Research","Drug Manufacturers - General","Drug Manufacturers - Specialty & Generic","Health Information Services","Healthcare Plans","Medical Care Facilities","Medical Devices","Medical Distribution","Medical Instruments & Supplies","Pharmaceutical Retailers"],
+    "Industrials": ["Aerospace & Defense","Airlines","Airports & Air Services","Building Products & Equipment","Business Equipment & Supplies","Conglomerates","Consulting Services","Electrical Equipment & Parts","Engineering & Construction","Farm & Heavy Construction Machinery","Industrial Distribution","Infrastructure Operations","Integrated Freight & Logistics","Marine Shipping","Metal Fabrication","Pollution & Treatment Controls","Railroads","Rental & Leasing Services","Security & Protection Services","Specialty Business Services","Specialty Industrial Machinery","Staffing & Employment Services","Tools & Accessories","Trucking","Waste Management"],
+    "Real Estate": ["REIT - Diversified","REIT - Healthcare Facilities","REIT - Hotel & Motel","REIT - Industrial","REIT - Mortgage","REIT - Office","REIT - Residential","REIT - Retail","REIT - Specialty","Real Estate - Development","Real Estate - Diversified","Real Estate Services"],
+    "Technology": ["Communication Equipment","Computer Hardware","Consumer Electronics","Electronic Components","Electronics & Computer Distribution","Information Technology Services","Scientific & Technical Instruments","Semiconductor Equipment & Materials","Semiconductors","Software - Application","Software - Infrastructure","Solar"],
+    "Utilities": ["Utilities - Diversified","Utilities - Independent Power Producers","Utilities - Regulated Electric","Utilities - Regulated Gas","Utilities - Regulated Water","Utilities - Renewable"],
+}
 
 SCREEN_SQL = """
 WITH latest_scores AS (
@@ -105,21 +99,10 @@ def _to_dicts(conn, sql: str, params: dict) -> list[dict]:
 
 @router.get("/options")
 def screen_options():
-    with db_cursor() as conn:
-        import json
-        try:
-            df = conn.execute(OPTIONS_SQL).fetchdf()
-        except Exception as e:
-            raise HTTPException(status_code=500, detail=str(e))
-        rows = json.loads(df.to_json(orient="records"))
-
-    sectors = sorted({r["sector"] for r in rows if r["sector"]})
-    by_sector: dict[str, list[str]] = {}
-    for r in rows:
-        if r["sector"] and r["industry"]:
-            by_sector.setdefault(r["sector"], []).append(r["industry"])
-
-    return {"sectors": sectors, "industries_by_sector": by_sector}
+    return {
+        "sectors": sorted(_SECTORS_BY_INDUSTRY.keys()),
+        "industries_by_sector": _SECTORS_BY_INDUSTRY,
+    }
 
 
 @router.get("")
