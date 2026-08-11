@@ -1,5 +1,16 @@
 <template>
-  <div>
+  <div @touchstart.passive="onTouchStart" @touchmove.passive="onTouchMove" @touchend.passive="onTouchEnd">
+
+    <!-- Pull-to-refresh indicator -->
+    <div class="ptr-indicator" :style="ptrStyle">
+      <svg v-if="!ptrRefreshing" :style="{ transform: `rotate(${ptrPull * 2}deg)`, opacity: Math.min(ptrPull / PTR_THRESHOLD, 1) }" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+        <path d="M12 5v14M5 12l7 7 7-7"/>
+      </svg>
+      <svg v-else class="ptr-spin" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+        <path d="M21 12a9 9 0 1 1-6.219-8.56"/>
+      </svg>
+    </div>
+
     <h2>Dashboard</h2>
     <p v-if="runDate" style="color:var(--pico-muted-color);margin-top:-0.75rem;margin-bottom:1.5rem">
       Last run: {{ runDate }}
@@ -234,6 +245,69 @@
 
 <script setup>
 import { ref, watch, onMounted, computed } from 'vue'
+
+// Pull-to-refresh
+const PTR_THRESHOLD = 72
+const ptrPull = ref(0)
+const ptrRefreshing = ref(false)
+let ptrStartY = 0
+
+const ptrStyle = computed(() => ({
+  height: ptrRefreshing.value ? '48px' : `${Math.min(ptrPull.value, PTR_THRESHOLD)}px`,
+  opacity: ptrPull.value > 4 || ptrRefreshing.value ? 1 : 0,
+}))
+
+function onTouchStart(e) {
+  ptrStartY = e.touches[0].clientY
+}
+
+function onTouchMove(e) {
+  if (ptrRefreshing.value || window.scrollY > 0) return
+  const delta = e.touches[0].clientY - ptrStartY
+  if (delta > 0) ptrPull.value = delta
+}
+
+async function onTouchEnd() {
+  if (ptrPull.value >= PTR_THRESHOLD && !ptrRefreshing.value) {
+    ptrPull.value = 0
+    ptrRefreshing.value = true
+    await refresh()
+    ptrRefreshing.value = false
+  } else {
+    ptrPull.value = 0
+  }
+}
+
+async function refresh() {
+  holdings.value = []
+  holdingsError.value = null
+  picks.value = []
+  sharpe.value = null
+  sharpeLoading.value = true
+  potentialCrosses.value = []
+  crossesLoading.value = true
+  earlyRecovery.value = []
+  recoveryLoading.value = true
+
+  try {
+    const data = await api.dashboard.holdings()
+    holdings.value = data.results
+    const ccys = [...new Set(data.results.map(h => h.currency).filter(Boolean))]
+    if (ccys.length) fxRates.value = await api.dashboard.fxRates(ccys)
+  } catch (e) {
+    holdingsError.value = e.message
+  }
+  try {
+    sharpe.value = await api.dashboard.sharpe()
+  } catch {
+    sharpe.value = null
+  } finally {
+    sharpeLoading.value = false
+  }
+  loadPicks()
+  loadPotentialCrosses()
+  loadEarlyRecovery()
+}
 import { RouterLink } from 'vue-router'
 import { api } from '../lib/api'
 
@@ -413,3 +487,21 @@ onMounted(async () => {
 
 watch(goldenOnly, loadPicks)
 </script>
+
+<style scoped>
+.ptr-indicator {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  overflow: hidden;
+  transition: height 0.2s ease, opacity 0.2s ease;
+  color: var(--pico-muted-color);
+}
+
+@keyframes ptr-spin {
+  to { transform: rotate(360deg); }
+}
+.ptr-spin {
+  animation: ptr-spin 0.8s linear infinite;
+}
+</style>
