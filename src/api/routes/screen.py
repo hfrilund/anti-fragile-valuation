@@ -38,15 +38,16 @@ WITH latest_scores AS (
     ORDER BY symbol, computed_at DESC
 ),
 latest_info AS (
-    SELECT DISTINCT ON (symbol)
-        symbol,
-        json_extract_string(data, '$.sector.0')   AS sector,
-        json_extract_string(data, '$.industry.0') AS industry,
-        CAST(json_extract(data, '$.marketCap.0')     AS BIGINT) AS market_cap,
-        CAST(json_extract(data, '$.averageVolume.0') AS BIGINT) AS avg_volume_3m
-    FROM yahoo_data
-    WHERE dataset = 'info'
-    ORDER BY symbol, ts DESC
+    SELECT DISTINCT ON (yd.symbol)
+        yd.symbol,
+        json_extract_string(yd.data, '$.sector.0')   AS sector,
+        json_extract_string(yd.data, '$.industry.0') AS industry,
+        CAST(json_extract(yd.data, '$.marketCap.0')     AS BIGINT) AS market_cap,
+        CAST(json_extract(yd.data, '$.averageVolume.0') AS BIGINT) AS avg_volume_3m
+    FROM yahoo_data yd
+    JOIN latest_scores ls ON yd.symbol = ls.symbol
+    WHERE yd.dataset = 'info'
+    ORDER BY yd.symbol, yd.ts DESC
 ),
 latest_ta AS (
     SELECT DISTINCT ON (symbol)
