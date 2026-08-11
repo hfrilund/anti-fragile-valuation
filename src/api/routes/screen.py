@@ -16,15 +16,19 @@ CAP_RANGES = {
 }
 
 OPTIONS_SQL = """
+WITH scored_symbols AS (
+    SELECT DISTINCT symbol FROM afv_21_scores WHERE afv21 > -1000
+)
 SELECT sector, industry
 FROM (
-    SELECT DISTINCT ON (symbol)
-        symbol,
-        json_extract_string(data, '$.sector.0')   AS sector,
-        json_extract_string(data, '$.industry.0') AS industry
-    FROM yahoo_data
-    WHERE dataset = 'info'
-    ORDER BY symbol, ts DESC
+    SELECT DISTINCT ON (yd.symbol)
+        yd.symbol,
+        json_extract_string(yd.data, '$.sector.0')   AS sector,
+        json_extract_string(yd.data, '$.industry.0') AS industry
+    FROM yahoo_data yd
+    JOIN scored_symbols s ON yd.symbol = s.symbol
+    WHERE yd.dataset = 'info'
+    ORDER BY yd.symbol, yd.ts DESC
 ) latest
 WHERE sector IS NOT NULL AND sector != ''
 GROUP BY sector, industry
