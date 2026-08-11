@@ -34,9 +34,9 @@ def _pick_revival_candidates(con, n: int = _REVIVAL_SAMPLE_SIZE) -> list[str]:
         SELECT yahoo_ticker FROM tickers
         WHERE is_dead = true
           AND dead_reason != 'manually marked dead'
-          AND (dead_since IS NULL OR dead_since >= current_timestamp - INTERVAL ? DAYS)
+          AND (dead_since IS NULL OR dead_since >= current_timestamp - (? * INTERVAL '1 day'))
           AND (last_revival_attempt IS NULL
-               OR last_revival_attempt < current_timestamp - INTERVAL ? DAYS)
+               OR last_revival_attempt < current_timestamp - (? * INTERVAL '1 day'))
         ORDER BY random()
         LIMIT ?
     """, (_REVIVAL_GIVE_UP_AFTER_DAYS, _REVIVAL_MIN_INTERVAL_DAYS, n)).fetchall()
