@@ -16,16 +16,17 @@ CAP_RANGES = {
 }
 
 OPTIONS_SQL = """
-SELECT
-    json_extract_string(data, '$.sector.0')   AS sector,
-    json_extract_string(data, '$.industry.0') AS industry
+SELECT sector, industry
 FROM (
-    SELECT DISTINCT ON (symbol) symbol, data
+    SELECT DISTINCT ON (symbol)
+        symbol,
+        json_extract_string(data, '$.sector.0')   AS sector,
+        json_extract_string(data, '$.industry.0') AS industry
     FROM yahoo_data
     WHERE dataset = 'info'
     ORDER BY symbol, ts DESC
 ) latest
-WHERE sector IS NOT NULL
+WHERE sector IS NOT NULL AND sector != ''
 GROUP BY sector, industry
 ORDER BY sector, industry
 """
