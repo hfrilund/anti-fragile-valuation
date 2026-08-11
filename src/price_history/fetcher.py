@@ -95,11 +95,12 @@ def _store(con, histories: dict[str, pd.DataFrame]) -> None:
 
         con.register('_ph_tmp', price_df)
         con.execute("""
+            DELETE FROM price_history
+            WHERE (symbol, date) IN (SELECT symbol, date FROM _ph_tmp)
+        """)
+        con.execute("""
             INSERT INTO price_history (symbol, date, open, high, low, close, volume)
-            SELECT t.symbol, t.date, t.open, t.high, t.low, t.close, t.volume
-            FROM _ph_tmp t
-            LEFT JOIN price_history p ON t.symbol = p.symbol AND t.date = p.date
-            WHERE p.date IS NULL
+            SELECT symbol, date, open, high, low, close, volume FROM _ph_tmp
         """)
         con.unregister('_ph_tmp')
 
