@@ -1,4 +1,4 @@
-from fastapi import APIRouter, Query, Request
+from fastapi import APIRouter, HTTPException, Query, Request
 from typing import Optional, List
 from api.db import db_cursor
 from slowapi import Limiter
@@ -102,7 +102,10 @@ def _to_dicts(conn, sql: str, params: dict) -> list[dict]:
 def screen_options():
     with db_cursor() as conn:
         import json
-        df = conn.execute(OPTIONS_SQL).fetchdf()
+        try:
+            df = conn.execute(OPTIONS_SQL).fetchdf()
+        except Exception as e:
+            raise HTTPException(status_code=500, detail=str(e))
         rows = json.loads(df.to_json(orient="records"))
 
     sectors = sorted({r["sector"] for r in rows if r["sector"]})
